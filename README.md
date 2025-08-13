@@ -6,7 +6,7 @@ This repository contains the full automation to research trending topics in **AI
 > - `n8n_ai_automation_workflow.json` – Import this into n8n  
 > - `sample_content_submissions.csv` – Example Google Sheet rows  
 > - `test_run_results.json` – Simulated test payloads  
-> - `loom_script.md` – Script outline for your Loom recording
+> - `loom_script.md` – Script outline for Loom recording
 
 ---
 
