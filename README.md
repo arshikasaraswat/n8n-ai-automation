@@ -138,22 +138,6 @@ Configure these in n8n:
 
 ---
 
-## Screenshots to Include (Guidance)
-
-1. Schedule Trigger config
-2. HTTP Request (Trends) config (URL, options)
-3. HTTP Request (YouTube) config (query params)
-4. OpenAI (Prompts) node config
-5. OpenAI (Blog) node config
-6. HTTP Request (VEO 3) node config
-7. Google Sheets Append config
-8. Slack node config (optional)
-9. Example successful Google Sheet row
-
-*(Take these inside n8n after importing and wiring credentials.)*
-
----
-
 ## Known Limits
 
 - Google Trends endpoint may throttle; prefer official/community nodes if available.
