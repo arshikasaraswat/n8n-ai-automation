@@ -1,0 +1,36 @@
+{
+  "topics": [
+    {
+      "topic": "AI Agents for Workflow Automation in SMEs",
+      "source": "Mock"
+    },
+    {
+      "topic": "No-code RPA vs AI Automation: 2025 Guide",
+      "source": "Mock"
+    }
+  ],
+  "prompts": [
+    {
+      "topic": "AI Agents for Workflow Automation in SMEs",
+      "prompt": "Blog brief + 90s script + 5 thumbnails..."
+    },
+    {
+      "topic": "No-code RPA vs AI Automation: 2025 Guide",
+      "prompt": "Blog brief + 90s script + 5 thumbnails..."
+    }
+  ],
+  "content": [
+    {
+      "topic": "AI Agents for Workflow Automation in SMEs",
+      "blog_length_words": 1300,
+      "video_link": "https://video.example.com/abcd1234"
+    },
+    {
+      "topic": "No-code RPA vs AI Automation: 2025 Guide",
+      "blog_length_words": 1250,
+      "video_link": "https://video.example.com/efgh5678"
+    }
+  ],
+  "sheet_append": "2 rows appended (simulated).",
+  "timestamp": "2025-08-13T09:17:52.923763"
+}

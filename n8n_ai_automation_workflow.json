@@ -1,0 +1,466 @@
+{
+  "name": "AI Automation Content Pipeline (Trends → Prompts → Content → Review)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": 1,
+          "unit": "days"
+        }
+      },
+      "id": "Schedule Trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://trends.google.com/trends/api/dailytrends?hl=en-US&ed={{{$now}}}&geo=US&ns=15",
+        "responseFormat": "string",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "Fetch Google Trends",
+      "name": "Fetch Google Trends",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        520,
+        120
+      ],
+      "notes": "If blocked, switch to Google Trends unofficial API or use a proxy. Alternatively, replace with the 'Google Trends' community node if installed."
+    },
+    {
+      "parameters": {
+        "functionCode": "\n// Parse Google Trends daily trends response (string) into items of topics\n// Response often starts with )]}' then JSON\nconst rows = [];\nfor (const item of items) {\n  let body = item.json.body || item.json.data || item.json;\n  if (typeof body !== 'string') body = JSON.stringify(body);\n  const cleaned = body.replace(/^\\)\\]\\}'?\\n?/, '');\n  let parsed;\n  try {\n    parsed = JSON.parse(cleaned);\n  } catch(e) {\n    parsed = {};\n  }\n  const days = parsed?.default?.trendingSearchesDays || [];\n  for (const d of days) {\n    for (const t of (d.trendingSearches || [])) {\n      const title = t?.title?.query;\n      if (title && title.toLowerCase().includes('ai')) {\n        rows.push({ topic: title, source: 'GoogleTrends', date: d.date });\n      }\n    }\n  }\n}\nreturn rows.map(r => ({ json: r }));\n"
+      },
+      "id": "Parse Trends",
+      "name": "Parse Trends",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [
+        760,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/youtube/v3/search",
+        "options": {
+          "queryParametersUi": {
+            "parameter": [
+              {
+                "name": "key",
+                "value": "={{$json.youtubeApiKey || $env.YOUTUBE_API_KEY}}"
+              },
+              {
+                "name": "part",
+                "value": "snippet"
+              },
+              {
+                "name": "maxResults",
+                "value": "25"
+              },
+              {
+                "name": "order",
+                "value": "viewCount"
+              },
+              {
+                "name": "q",
+                "value": "AI Automation"
+              },
+              {
+                "name": "type",
+                "value": "video"
+              },
+              {
+                "name": "publishedAfter",
+                "value": "={{$now.minus({days:7}).toISO()}}"
+              }
+            ]
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "YouTube Search",
+      "name": "YouTube Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        520,
+        420
+      ],
+      "notes": "Provide API key via env var YOUTUBE_API_KEY or map it in 'youtubeApiKey' field earlier."
+    },
+    {
+      "parameters": {
+        "functionCode": "\n// Map YT results to topics\nconst out = [];\nfor (const item of items) {\n  const list = item.json.items || [];\n  for (const v of list) {\n    const title = v?.snippet?.title;\n    if (title && title.toLowerCase().includes('ai')) {\n      out.push({\n        topic: title,\n        source: 'YouTube',\n        videoId: v?.id?.videoId,\n        channel: v?.snippet?.channelTitle,\n        publishedAt: v?.snippet?.publishedAt,\n      });\n    }\n  }\n}\nreturn out.map(x => ({ json: x }));\n"
+      },
+      "id": "Parse YouTube",
+      "name": "Parse YouTube",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [
+        760,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "concat"
+      },
+      "id": "Merge Topics",
+      "name": "Merge Topics",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [
+        980,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "\n// Deduplicate by topic (case-insensitive), keep first occurrence\nconst seen = new Set();\nconst result = [];\nfor (const item of items) {\n  const t = (item.json.topic || '').trim().toLowerCase();\n  if (!t) continue;\n  if (!seen.has(t)) {\n    seen.add(t);\n    result.push(item);\n  }\n}\nreturn result;\n"
+      },
+      "id": "Deduplicate Topics",
+      "name": "Deduplicate Topics",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "json"
+      },
+      "id": "Split In Batches (Topics)",
+      "name": "Split In Batches (Topics)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        1460,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "operation": "create",
+        "model": "gpt-4o-mini",
+        "messages": "={{[{ role: 'system', content: 'You are a prompt engineer. Create concise, creative, and clear prompts for content creators about AI Automation topics.' }, { role: 'user', content: `Topic: ${$json.topic}\\nGenerate: \\n1) A blog brief (title, outline with 5-7 H2s, target audience, SEO keywords)\\n2) A 90-second video script outline (hook, 3 beats, CTA)\\n3) 5 thumbnail/title ideas.\\nConstraints: Concrete, no fluff, include 2 data points/stats if relevant.` } ]}}"
+      },
+      "id": "Generate Prompts (OpenAI)",
+      "name": "Generate Prompts (OpenAI)",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 5,
+      "position": [
+        1700,
+        120
+      ],
+      "notes": "Configure OpenAI credentials in n8n."
+    },
+    {
+      "parameters": {
+        "functionCode": "\n// Attach prompt text to item\nconst out = [];\nfor (const item of items) {\n  const content = item.json.choices?.[0]?.message?.content || item.json.data || item.json.text || '';\n  out.push({ json: { topic: $json.topic, prompt: content }});\n}\nreturn out;\n"
+      },
+      "id": "Normalize Prompt",
+      "name": "Normalize Prompt",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "operation": "create",
+        "model": "gpt-4o",
+        "messages": "={{[{ role: 'system', content: 'You are a senior technical content writer. Write authoritative, specific blog posts with code or config snippets when relevant.' }, { role: 'user', content: `Write a 1200-1500 word blog post.\\nTopic: ${$json.topic}\\nInstructions: ${$json.prompt}` } ]}}",
+        "temperature": 0.7
+      },
+      "id": "Create Blog (OpenAI)",
+      "name": "Create Blog (OpenAI)",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 5,
+      "position": [
+        1700,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://veo.googleapis.com/v1/videos:generate",
+        "authentication": "genericCredentialType",
+        "options": {
+          "bodyParametersUi": {
+            "parameter": [
+              {
+                "name": "prompt",
+                "value": "={{`Create a 90-second explainer on: ${$json.topic}. Guidance: ${$json.prompt}. Style: clean motion graphics, captions on, music bed.`}}"
+              },
+              {
+                "name": "aspect_ratio",
+                "value": "9:16"
+              },
+              {
+                "name": "duration_seconds",
+                "value": "90"
+              }
+            ]
+          }
+        },
+        "jsonParameters": true,
+        "responseFormat": "json"
+      },
+      "id": "Generate Video (Google VEO 3)",
+      "name": "Generate Video (Google VEO 3)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1940,
+        420
+      ],
+      "notes": "Add custom credentials for Google VEO 3 API (HTTP). Replace endpoint/fields if your account differs."
+    },
+    {
+      "parameters": {
+        "functionCode": "\n// Collate blog + video into single object\nconst blog = $item(0).$node['Create Blog (OpenAI)'].json.choices?.[0]?.message?.content || '';\nconst videoResp = $item(1).$node['Generate Video (Google VEO 3)'].json || {};\nconst videoLink = videoResp?.video_url || videoResp?.result?.url || '[pending rendering]';\nreturn [{ json: { topic: $json.topic, prompt: $json.prompt, blog, videoLink } }];\n"
+      },
+      "id": "Collate Content",
+      "name": "Collate Content",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "sheetId": "={{$env.GSHEET_ID}}",
+        "range": "Sheet1!A1:F1",
+        "options": {
+          "valueInputMode": "RAW"
+        },
+        "values": "={{[[$json.topic, $json.prompt, $json.blog, $json.videoLink, $now.toISO(), 'Pending Review']]}}"
+      },
+      "id": "Append to Google Sheet",
+      "name": "Append to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 6,
+      "position": [
+        2420,
+        260
+      ],
+      "notes": "Create a Google Sheets credential in n8n and set GSHEET_ID as env var. Ensure header row exists."
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "channel": "={{$env.SLACK_CHANNEL || 'content-reviews'}}",
+        "text": "={{`New AI Automation content ready for review: *${$json.topic}*\\nVideo: ${$json.videoLink}\\nStatus: Pending Review`}}"
+      },
+      "id": "Slack Notify (Bonus)",
+      "name": "Slack Notify (Bonus)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 3,
+      "position": [
+        2660,
+        260
+      ],
+      "notes": "Optional bonus notification. Configure Slack credentials and channel."
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Google Trends",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "YouTube Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Google Trends": {
+      "main": [
+        [
+          {
+            "node": "Parse Trends",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube Search": {
+      "main": [
+        [
+          {
+            "node": "Parse YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Trends": {
+      "main": [
+        [
+          {
+            "node": "Merge Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse YouTube": {
+      "main": [
+        [
+          {
+            "node": "Merge Topics",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Topics": {
+      "main": [
+        [
+          {
+            "node": "Deduplicate Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduplicate Topics": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches (Topics)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches (Topics)": {
+      "main": [
+        [
+          {
+            "node": "Generate Prompts (OpenAI)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Append to Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Prompts (OpenAI)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Prompt": {
+      "main": [
+        [
+          {
+            "node": "Create Blog (OpenAI)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate Video (Google VEO 3)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Blog (OpenAI)": {
+      "main": [
+        [
+          {
+            "node": "Collate Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Video (Google VEO 3)": {
+      "main": [
+        [
+          {
+            "node": "Collate Content",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Collate Content": {
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Google Sheet": {
+      "main": [
+        [
+          {
+            "node": "Slack Notify (Bonus)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "meta": {
+    "templateVersion": "1.0.0",
+    "notes": "Import into n8n. Add credentials & env vars: YOUTUBE_API_KEY, GSHEET_ID, SLACK_CHANNEL (optional)."
+  },
+  "pinData": {},
+  "active": false,
+  "createdAt": "2025-08-13T09:17:52.923763",
+  "updatedAt": "2025-08-13T09:17:52.923763"
+}
